@@ -116,12 +116,15 @@ exports.checkKontenjan = functions.region('europe-west1').pubsub.schedule('1,16,
         for(const crn in listeners[LSU][subj]) {
           const options = getOptions(subj, LSU);
           rp(options).then(html => {
-            if (html == undefined)
-              return
+            if (html == undefined) return
             html = html.split("<td>Class Rest.</td>")[1];
+            if (html == undefined) return
             html = html.trim().substring(10);
+            if (html == undefined) return
             html = html.split("<div class=\"footer\">")[0];
+            if (html == undefined) return
             html = html.split("<tr>");
+            if (html == undefined) return
 
             function tdToCapacityEnrolled(body) {
               body = body.split("<td>").join("");
