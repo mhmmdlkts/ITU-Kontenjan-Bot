@@ -27,9 +27,31 @@ bot.onText(/\/start/, (msg, match) => {
     date: msg.date,
   };
 
-  db.ref("users").child(obj.chatId).set(obj);
+  db.ref("users").child(obj.chatId).update(obj);
   bot.sendMessage(chatId, `This bot is developed by *mhmmdlkts* for İTÜ students. Do not hesitate to write to me when you have a suggestion or find a mistake.`, {parse_mode: 'Markdown'})
   bot.sendMessage(chatId, `Type "/subscribe <CODE> <CRN> <LU (optional)>" for subscribing a course`)
+});
+
+bot.onText(/\/status/, (msg, match) => {
+  const chatId = msg.chat.id
+  db.ref("users").child(chatId).child("subscribes").once("value").then(subscribes => {
+    subscribes = subscribes.toJSON();
+    const buttons = [];
+    const message = ["*Courses you subscribed to:*"];
+    for(const sub in subscribes) {
+      let val = subscribes[sub].split("-")
+      message.push(val.join(" "))
+      buttons.push(["/unsubscribe " + val[1] + " " + val[2] + " " + val[0]]);
+    }
+
+    const opts = {
+      reply_markup:{
+        keyboard: buttons
+      },
+      parse_mode: 'Markdown'
+    };
+    bot.sendMessage(chatId, message.length==1?"You are not subscribed to any courses":message.join("\n"), opts);
+  });
 });
 
 bot.onText(/\/subscribe (.+)/, (msg, match) => {
@@ -60,6 +82,13 @@ bot.onText(/\/subscribe (.+)/, (msg, match) => {
     if (wasListening) {
       bot.sendMessage(chatId, "You are already subscribed " + subj + " " + crn)
     } else {
+      const child = (isBsc?LS:LU) + "-" + subj + "-" + crn;
+      db.ref("users").child(chatId).child("subscribes").transaction(val => {
+        if (val === null)
+          return [child];
+        val.push(child);
+        return val;
+      });
       bot.sendMessage(chatId, subj + " " + crn + " is successfully subscribed ")
     }
   });
@@ -97,6 +126,19 @@ bot.onText(/\/unsubscribe (.+)/, (msg, match) => {
     };
     if (wasListened) {
       bot.sendMessage(chatId, "You are now not subscribing " + subj + " " + crn, opts)
+      const child = (isBsc?LS:LU) + "-" + subj + "-" + crn;
+      db.ref("users").child(chatId).child("subscribes").transaction(val => {
+        if (val === null) {
+          return [];
+        } else {
+
+          const index = val.indexOf(child);
+          if (index > -1)
+            val.splice(index, 1);
+
+          return val;
+        }
+      });
     } else {
       bot.sendMessage(chatId, "You were not already subscribing " + subj + " " + crn, opts)
     }
