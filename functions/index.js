@@ -22,7 +22,7 @@ bot.onText(/\/start/, (msg, match) => {
   const obj = {
     chatId: chatId + "",
     first_name: msg.from.first_name,
-    username: msg.from.username,
+    username: msg.from.username==undefined?null:msg.from.username,
     lang: msg.from.language_code,
     date: msg.date,
   };
