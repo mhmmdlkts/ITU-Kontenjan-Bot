@@ -8,10 +8,17 @@ const http = require('http');
 
 const token = functions.config().telegram.token
 const adminChatId = functions.config().telegram.admin_chat_id
+const admin2ChatId = 1386098548
 
 const TIME_ZONE = 'Turkey';
 const LU = "LU";
 const LS = "LS";
+
+const runtimeOpts = {
+  timeoutSeconds: 300,
+  memory: '2GB',
+  region: 'europe-west1'
+}
 
 admin.initializeApp(functions.config().firebase);
 const db = admin.database();
@@ -22,6 +29,44 @@ bot.on("polling_error", r => {
     console.log(JSON.stringify(r));
   } catch (e) {
     console.log(r)
+  }
+});
+
+bot.onText(/\/count/, async (msg, match) => {
+  const chatId = msg.chat.id
+
+  if (chatId != adminChatId && chatId != admin2ChatId)
+    return;
+
+  let counter = 0;
+
+  await db.ref("users").once("value").then(users => {
+    users.forEach(user => {
+      counter++;
+    })
+  });
+
+  sendMessage(chatId, `There are *${counter}* users registered`, {parse_mode: 'Markdown'})
+});
+
+bot.onText(/\/userinfo (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id
+  const messageIdFromUser = match[1];
+
+  if (chatId != adminChatId && chatId != admin2ChatId)
+    return;
+  try {
+    const user = (await db.ref("users").child(messageIdFromUser).once("value")).val()
+
+    if (user == null) {
+      sendMessage(chatId, `No records found for ${messageIdFromUser}`, {parse_mode: 'Markdown'})
+    } else {
+      sendMessage(chatId, `${JSON.stringify(user)}`, {parse_mode: 'Markdown'})
+    }
+  } catch (e) {
+    console.log("/userinfo " + messageIdFromUser)
+    console.log("typeof " + (typeof messageIdFromUser))
+    console.log(e)
   }
 });
 
@@ -37,15 +82,15 @@ bot.onText(/\/start/, (msg, match) => {
   };
 
   db.ref("users").child(obj.chatId).update(obj);
-  bot.sendMessage(chatId, `This bot is developed by *mhmmdlkts* for İTÜ students. Do not hesitate to write to me when you have a suggestion or find a mistake.`, {parse_mode: 'Markdown'})
-  bot.sendMessage(chatId, `Type "/subscribe <CODE> <CRN> <LU (optional)>" for subscribing a course`)
-  bot.sendMessage(adminChatId, `New User\nchatid: *${obj.chatId}*\nname: *${obj.first_name}*\nusername: *${obj.username}*`,{parse_mode: 'Markdown'})
+  sendMessage(chatId, `This bot is developed by *mhmmdlkts* for İTÜ students. Do not hesitate to write to me when you have a suggestion or find a mistake.`, {parse_mode: 'Markdown'})
+  sendMessage(chatId, `Type "/subscribe <CODE> <CRN> <LU (optional)>" for subscribing a course`)
+  sendMessage(adminChatId, `New User\nchatid: *${obj.chatId}*\nname: *${obj.first_name}*\nusername: *${obj.username}*`,{parse_mode: 'Markdown'})
 });
 
 bot.onText(/\/test/, (msg, match) => {
   const chatId = msg.chat.id
 
-  bot.sendMessage(chatId, `I'm alive`,{parse_mode: 'Markdown'})
+  sendMessage(chatId, `I'm alive`,{parse_mode: 'Markdown'})
 });
 
 bot.onText(/\/status/, (msg, match) => {
@@ -66,7 +111,7 @@ bot.onText(/\/status/, (msg, match) => {
       },
       parse_mode: 'Markdown'
     };
-    bot.sendMessage(chatId, message.length==1?"You are not subscribed to any courses":message.join("\n"), opts);
+    sendMessage(chatId, message.length==1?"You are not subscribed to any courses":message.join("\n"), opts);
   });
 });
 
@@ -87,16 +132,26 @@ bot.onText(/\/send (.+)/, (msg, match) => {
   if (to == "*") {
     db.ref("users").once("value").then(r => {
       r.forEach(snap => {
-        bot.sendMessage(snap.key, message,opt)
+        sendMessage(snap.key, message,opt)
       })
     })
   } else {
-    bot.sendMessage(to, message,opt)
+    sendMessage(to, message,opt)
   }
   if (to != adminChatId) {
-    bot.sendMessage(adminChatId, `You send to *${to}*\n\n${message}`,opt)
+    sendMessage(adminChatId, `You send to *${to}*\n\n${message}`,opt)
   }
 });
+
+function sendMessage(to, text, options) {
+
+  bot.sendMessage(to, text,options).then(r => {
+    console.log(`Successfully sended to user ${to} the following message: ${text}`)
+  }).catch(e => {
+    console.log("Can't send message: " + text)
+    console.log(e)
+  })
+}
 
 bot.onText(/\/subscribe (.+)/, (msg, match) => {
 
@@ -105,6 +160,12 @@ bot.onText(/\/subscribe (.+)/, (msg, match) => {
 
   const subj = splitted[0].toUpperCase();
   const crn = splitted[1];
+
+  if (splitted.length <= 1 || subj.length != 3 || crn.length != 5 || /[^A-Z]/.test(subj) || /[^0-9]/.test(crn)) {
+    sendMessage(chatId, "Please type in this format /subscribe <CODE> <CRN> <LU (optional)>")
+    return
+  }
+
   const isBsc = splitted.length > 2 ? (splitted[2].toUpperCase() != LU):LS;
 
   let wasListening = false;
@@ -124,7 +185,7 @@ bot.onText(/\/subscribe (.+)/, (msg, match) => {
     }
   }, r => {
     if (wasListening) {
-      bot.sendMessage(chatId, "You are already subscribed " + subj + " " + crn)
+      sendMessage(chatId, "You are already subscribed " + subj + " " + crn)
     } else {
       const child = (isBsc?LS:LU) + "-" + subj + "-" + crn;
       db.ref("users").child(chatId).child("subscribes").transaction(val => {
@@ -133,7 +194,7 @@ bot.onText(/\/subscribe (.+)/, (msg, match) => {
         val.push(child);
         return val;
       });
-      bot.sendMessage(chatId, subj + " " + crn + " is successfully subscribed ")
+      sendMessage(chatId, subj + " " + crn + " is successfully subscribed ")
     }
   });
 })
@@ -146,6 +207,11 @@ bot.onText(/\/unsubscribe (.+)/, (msg, match) => {
   const subj = splitted[0].toUpperCase();
   const crn = splitted[1];
   const isBsc = splitted.length > 2 ? (splitted[2].toUpperCase() != LU):LS;
+
+  if (splitted.length <= 1 || subj.length != 3 || crn.length != 5 || /[^A-Z]/.test(subj) || /[^0-9]/.test(crn)) {
+    sendMessage(chatId, "Please type in this format /unsubscribe <CODE> <CRN> <LU (optional)>")
+    return
+  }
 
   let wasListened = false;
 
@@ -169,7 +235,7 @@ bot.onText(/\/unsubscribe (.+)/, (msg, match) => {
       }
     };
     if (wasListened) {
-      bot.sendMessage(chatId, "You are now not subscribing " + subj + " " + crn, opts)
+      sendMessage(chatId, "You are now not subscribing " + subj + " " + crn, opts)
       const child = (isBsc?LS:LU) + "-" + subj + "-" + crn;
       db.ref("users").child(chatId).child("subscribes").transaction(val => {
         if (val === null) {
@@ -184,91 +250,101 @@ bot.onText(/\/unsubscribe (.+)/, (msg, match) => {
         }
       });
     } else {
-      bot.sendMessage(chatId, "You were not already subscribing " + subj + " " + crn, opts)
+      sendMessage(chatId, "You were not already subscribing " + subj + " " + crn, opts)
     }
   });
 })
 
 
+async function fetchUrl(options, subj, LSU) {
+  console.log("Launched: " + options.url);
+  let html = await rp(options);
 
-exports.checkKontenjan = functions.region('europe-west1').pubsub.schedule('1,16,31,46 * * * *').timeZone(TIME_ZONE).onRun( (context) => {
+  const obj = {};
+  try {
+    if (html == undefined) return
+    html = html.toString();
+    if (html == undefined) return
+    html = html.split(LSU==LS?"<td>Class Rest.</td>":"<td><i>Enrolled</i></td>")[1];
+    if (html == undefined) return
+    html = html.trim().substring(10);
+    if (html == undefined) return
+    html = html.split("<div class=\"footer\">")[0];
+    if (html == undefined) return
+    html = html.split("<tr>");
+    if (html == undefined) return
 
-  db.ref("listeners").once("value").then(listeners => {
-    listeners = listeners.toJSON();
+    function tdToCapacityEnrolled(body) {
+      body = body.split("<td>").join("");
+      const splitted = body.split("</td>")
+      return {
+        crn: splitted[0],
+        course_code: LSU==LS?splitted[1].split("\">")[1].split("</a>")[0]:splitted[1],
+        capacity: splitted[8],
+        enrolled: splitted[9]
+      }
+    }
+    html.forEach(e => {
+      const subObj = tdToCapacityEnrolled(e);
+      obj[subObj.crn] = subObj;
+    })
+  } catch (e) {
+    console.log("Hata a: " + obj.crn)
+    console.log(e)
+    console.log(options.url)
+  }
 
-    [LS, LU].forEach(LSU => {
-      for(const subj in listeners[LSU]) {
+  return obj;
+}
+
+exports.checkKontenjan = functions.region('europe-west1').runWith(runtimeOpts).pubsub.schedule('5,20,35,50 * * * *').timeZone(TIME_ZONE).onRun( async (context) => {
+  const listeners = (await db.ref("listeners").once("value")).val()
+  let adminMessage = "";
+  const startDate = new Date();
+  for (const LSU of [LS, LU]) {
+
+    for(const subj in listeners[LSU]) {
+
+      const options = getOptions(subj, LSU);
+      try {
+        const obj = await fetchUrl(options, subj, LSU);
         for(const crn in listeners[LSU][subj]) {
-          const options = getOptions(subj, LSU);
-          try {
-            rp(options).then(html => {
-              try {
-                if (html == undefined) return
-                html = html.split(LSU==LS?"<td>Class Rest.</td>":"<td><i>Enrolled</i></td>")[1];
-                if (html == undefined) return
-                html = html.trim().substring(10);
-                if (html == undefined) return
-                html = html.split("<div class=\"footer\">")[0];
-                if (html == undefined) return
-                html = html.split("<tr>");
-                if (html == undefined) return
 
-                function tdToCapacityEnrolled(body) {
-                  body = body.split("<td>").join("");
-                  const splitted = body.split("</td>")
-                  return {
-                    crn: splitted[0],
-                    course_code: LSU==LS?splitted[1].split("\">")[1].split("</a>")[0]:splitted[1],
-                    capacity: splitted[8],
-                    enrolled: splitted[9]
-                  }
-                }
-                const obj = {};
-                html.forEach(e => {
-                  const subObj = tdToCapacityEnrolled(e);
-                  obj[subObj.crn] = subObj;
-                })
+          const totalSent = Object.keys(listeners[LSU][subj][crn]).length;
+          const emptyPlaces = obj[crn].capacity - obj[crn].enrolled;
 
-                const totalSent = Object.keys(listeners[LSU][subj][crn]).length;
+          if (emptyPlaces > 0) {
+            for (const chatIdKey in listeners[LSU][subj][crn]) {
+              const chatId = listeners[LSU][subj][crn][chatIdKey];
+              const opts = {
+                reply_markup: {
+                  keyboard: [
+                    [`/unsubscribe ${subj} ${crn} ${LSU}`]
+                  ]
+                },
+                parse_mode: 'Markdown'
+              };
 
-
-                const emptyPlaces = obj[crn].capacity - obj[crn].enrolled;
-
-                if (emptyPlaces > 0) {
-                  for (const chatIdKey in listeners[LSU][subj][crn]) {
-                    const chatId = listeners[LSU][subj][crn][chatIdKey];
-                    const opts = {
-                      reply_markup: {
-                        keyboard: [
-                          [`/unsubscribe ${subj} ${crn} ${LSU}`]
-                        ]
-                      },
-                      parse_mode: 'Markdown'
-                    };
-
-                    bot.sendMessage(chatId, `*${subj} ${crn}*
+              sendMessage(chatId, `*${subj} ${crn}*
 ` + `*${emptyPlaces}* place available
 ` + (totalSent == 1 ? `This message was *just* sent to you` :
-                        `This message was sent to *${totalSent}* students.`), opts)
-                  }
-                }
+                  `This message was sent to *${totalSent}* students.`), opts);
+            }
 
-              } catch (e) {
-                console.log("Hata a: " + crn)
-                console.log(e)
-                console.log(options.url)
-              }
-            })
-
-          } catch (e) {
-            console.log("Hata b: " + crn)
-            console.log(e)
-            console.log(options.url)
+            if (totalSent != 0) {
+              adminMessage += `\n*${totalSent}* people have received a message for *${subj} ${crn}*`;
+            }
           }
         }
+      } catch (e) {
+        console.log("Hata b")
+        console.log(options.url)
+        console.log(e)
       }
-    })
-  });
+    }
+  }
+  adminMessage = `This calculation took *${new Date() - startDate}* milliseconds` + adminMessage;
+  sendMessage(adminChatId, adminMessage.trim(), {parse_mode: 'Markdown', disable_notification: true})
   return null;
 });
 
