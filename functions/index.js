@@ -153,7 +153,7 @@ function sendMessage(to, text, options) {
   })
 }
 
-bot.onText(/\/subscribe (.+)/, (msg, match) => {
+bot.onText(/\/subscribe (.+)/, async(msg, match) => {
 
   const chatId = msg.chat.id
   const splitted = match[1].split(" ");
@@ -167,6 +167,14 @@ bot.onText(/\/subscribe (.+)/, (msg, match) => {
   }
 
   const isBsc = splitted.length > 2 ? (splitted[2].toUpperCase() != LU):LS;
+
+  const LSU = isBsc?LS:LU;
+  const options = getOptions(subj, LSU);
+  const obj = await fetchUrl(options, subj, LSU);
+  if (obj[crn] == undefined || obj[crn] == undefined) {
+    sendMessage(chatId, `No registration for *${subj} ${crn}* Please check the required values from ${options.url}`, {parse_mode: 'Markdown'})
+    return
+  }
 
   let wasListening = false;
 
@@ -306,10 +314,10 @@ exports.checkKontenjan = functions.region('europe-west1').runWith(runtimeOpts).p
     for(const subj in listeners[LSU]) {
 
       const options = getOptions(subj, LSU);
-      try {
-        const obj = await fetchUrl(options, subj, LSU);
-        for(const crn in listeners[LSU][subj]) {
+      const obj = await fetchUrl(options, subj, LSU);
+      for(const crn in listeners[LSU][subj]) {
 
+      try {
           const totalSent = Object.keys(listeners[LSU][subj][crn]).length;
           const emptyPlaces = obj[crn].capacity - obj[crn].enrolled;
 
@@ -335,11 +343,11 @@ exports.checkKontenjan = functions.region('europe-west1').runWith(runtimeOpts).p
               adminMessage += `\n*${totalSent}* people have received a message for *${subj} ${crn}*`;
             }
           }
+        } catch (e) {
+          console.log("Hata b")
+          console.log(options.url)
+          console.log(e)
         }
-      } catch (e) {
-        console.log("Hata b")
-        console.log(options.url)
-        console.log(e)
       }
     }
   }
