@@ -143,14 +143,16 @@ bot.onText(/\/send (.+)/, (msg, match) => {
   }
 });
 
-function sendMessage(to, text, options) {
-
-  bot.sendMessage(to, text,options).then(r => {
+async function sendMessage(to, text, options) {
+  let success = true;
+  await bot.sendMessage(to, text,options).then(r => {
     console.log(`Successfully sended to user ${to} the following message: ${text}`)
   }).catch(e => {
     console.log("Can't send message: " + text)
     console.log(e)
+    success = false;
   })
+  return success
 }
 
 bot.onText(/\/subscribe (.+)/, async(msg, match) => {
@@ -221,8 +223,13 @@ bot.onText(/\/unsubscribe (.+)/, (msg, match) => {
     return
   }
 
-  let wasListened = false;
+  unsubscribe(chatId, subj, crn, isBsc, false)
+})
 
+function unsubscribe(chatId, subj, crn, isBsc, autoUnsubscribe) {
+  if (autoUnsubscribe == undefined)
+    autoUnsubscribe = false;
+  let wasListened = false;
   db.ref("listeners").child(isBsc?LS:LU).child(subj).child(crn).transaction(val => {
     if (val === null) {
       return [];
@@ -243,7 +250,10 @@ bot.onText(/\/unsubscribe (.+)/, (msg, match) => {
       }
     };
     if (wasListened) {
-      sendMessage(chatId, "You are now not subscribing " + subj + " " + crn, opts)
+      sendMessage(chatId, "You are now not subscribing *" + subj + " " + crn + "*", opts)
+      if (autoUnsubscribe) {
+        sendMessage(adminChatId, `*${subj} ${crn}* subscription was removed due to failure to send a message to *${chatId}*`, opts)
+      }
       const child = (isBsc?LS:LU) + "-" + subj + "-" + crn;
       db.ref("users").child(chatId).child("subscribes").transaction(val => {
         if (val === null) {
@@ -261,8 +271,7 @@ bot.onText(/\/unsubscribe (.+)/, (msg, match) => {
       sendMessage(chatId, "You were not already subscribing " + subj + " " + crn, opts)
     }
   });
-})
-
+}
 
 async function fetchUrl(options, subj, LSU) {
   console.log("Launched: " + options.url);
@@ -336,7 +345,11 @@ exports.checkKontenjan = functions.region('europe-west1').runWith(runtimeOpts).p
               sendMessage(chatId, `*${subj} ${crn}*
 ` + `*${emptyPlaces}* place available
 ` + (totalSent == 1 ? `This message was *just* sent to you` :
-                  `This message was sent to *${totalSent}* students.`), opts);
+                  `This message was sent to *${totalSent}* students.`), opts). then(r => {
+                    if (!r) {
+                      unsubscribe(chatId, subj, crn, LSU == LS, true)
+                    }
+              });
             }
 
             if (totalSent != 0) {
