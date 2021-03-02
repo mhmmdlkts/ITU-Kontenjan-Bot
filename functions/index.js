@@ -38,15 +38,9 @@ bot.onText(/\/count/, async (msg, match) => {
   if (chatId != adminChatId && chatId != admin2ChatId)
     return;
 
-  let counter = 0;
+  const count = (await db.ref("statistics").child("users").once("value")).val();
 
-  await db.ref("users").once("value").then(users => {
-    users.forEach(user => {
-      counter++;
-    })
-  });
-
-  sendMessage(chatId, `There are *${counter}* users registered`, {parse_mode: 'Markdown'})
+  sendMessage(chatId, `There are *${count}* users registered`, {parse_mode: 'Markdown'})
 });
 
 bot.onText(/\/userinfo (.+)/, async (msg, match) => {
@@ -59,9 +53,14 @@ bot.onText(/\/userinfo (.+)/, async (msg, match) => {
     const user = (await db.ref("users").child(messageIdFromUser).once("value")).val()
 
     if (user == null) {
-      sendMessage(chatId, `No records found for ${messageIdFromUser}`, {parse_mode: 'Markdown'})
+      sendMessage(chatId, `No records found for chatId: ${messageIdFromUser}`, {parse_mode: 'Markdown'})
     } else {
-      sendMessage(chatId, `${JSON.stringify(user)}`, {parse_mode: 'Markdown'})
+      let message = `chatid: *${user.chatId}*\nname: *${user.first_name}*\nusername: *${user.username}*`;
+      if (user.subscribes != undefined) {
+        const separator = "\n\t"
+        message += separator + user.subscribes.join(separator);
+      }
+      sendMessage(adminChatId, message,{parse_mode: 'Markdown'})
     }
   } catch (e) {
     console.log("/userinfo " + messageIdFromUser)
@@ -70,7 +69,7 @@ bot.onText(/\/userinfo (.+)/, async (msg, match) => {
   }
 });
 
-bot.onText(/\/start/, (msg, match) => {
+bot.onText(/\/start/, async (msg, match) => {
   const chatId = msg.chat.id
 
   const obj = {
@@ -81,10 +80,26 @@ bot.onText(/\/start/, (msg, match) => {
     date: msg.date.language_code==undefined?null:msg.from.date,
   };
 
+  const user = (await db.ref("users").child(obj.chatId).once("value")).val()
+
   db.ref("users").child(obj.chatId).update(obj);
+
   sendMessage(chatId, `This bot is developed by *mhmmdlkts* for İTÜ students. Do not hesitate to write to me when you have a suggestion or find a mistake.`, {parse_mode: 'Markdown'})
   sendMessage(chatId, `Type "/subscribe <CODE> <CRN> <LU (optional)>" for subscribing a course`)
-  sendMessage(adminChatId, `New User\nchatid: *${obj.chatId}*\nname: *${obj.first_name}*\nusername: *${obj.username}*`,{parse_mode: 'Markdown'})
+
+  if (user == null) {
+    let userCount = 1;
+    db.ref("statistics").child("users").transaction(val => {
+      if (val === null) {
+        return userCount;
+      } else {
+        userCount = val + 1;
+        return userCount;
+      }
+    });
+    sendMessage(adminChatId, `*${userCount}.* User\n\nchatid: *${obj.chatId}*\nname: *${obj.first_name}*\nusername: *${obj.username}*`,{parse_mode: 'Markdown'})
+  }
+
 });
 
 bot.onText(/\/test/, (msg, match) => {
@@ -318,6 +333,9 @@ exports.checkKontenjan = functions.region('europe-west1').runWith(runtimeOpts).p
   const listeners = (await db.ref("listeners").once("value")).val()
   let adminMessage = "";
   const startDate = new Date();
+  let totalTotalSent = 0;
+  let totalSubscriptions = 0;
+  let totalDifferentSubscriptions = 0;
   for (const LSU of [LS, LU]) {
 
     for(const subj in listeners[LSU]) {
@@ -327,33 +345,37 @@ exports.checkKontenjan = functions.region('europe-west1').runWith(runtimeOpts).p
       for(const crn in listeners[LSU][subj]) {
 
       try {
-          const totalSent = Object.keys(listeners[LSU][subj][crn]).length;
-          const emptyPlaces = obj[crn].capacity - obj[crn].enrolled;
+        const totalSent = Object.keys(listeners[LSU][subj][crn]).length;
+        totalSubscriptions += totalSent;
+        totalDifferentSubscriptions++;
+        const emptyPlaces = obj[crn].capacity - obj[crn].enrolled;
 
-          if (emptyPlaces > 0) {
-            for (const chatIdKey in listeners[LSU][subj][crn]) {
-              const chatId = listeners[LSU][subj][crn][chatIdKey];
-              const opts = {
-                reply_markup: {
-                  keyboard: [
-                    [`/unsubscribe ${subj} ${crn} ${LSU}`]
-                  ]
-                },
-                parse_mode: 'Markdown'
-              };
+        if (emptyPlaces > 0) {
+          totalTotalSent += totalSent;
+          for (const chatIdKey in listeners[LSU][subj][crn]) {
+            const chatId = listeners[LSU][subj][crn][chatIdKey];
+            const opts = {
+              reply_markup: {
+                keyboard: [
+                  [`/unsubscribe ${subj} ${crn} ${LSU}`]
+                ]
+              },
+              parse_mode: 'Markdown'
+            };
 
-              sendMessage(chatId, `*${subj} ${crn}*
+            await sendMessage(chatId, `*${subj} ${crn}*
 ` + `*${emptyPlaces}* place available
 ` + (totalSent == 1 ? `This message was *just* sent to you` :
-                  `This message was sent to *${totalSent}* students.`), opts). then(r => {
-                    if (!r) {
-                      unsubscribe(chatId, subj, crn, LSU == LS, true)
-                    }
+                `This message was sent to *${totalSent}* students.`), opts). then(r => {
+                  if (!r) {
+                    unsubscribe(chatId, subj, crn, LSU == LS, true)
+                  }
               });
             }
 
             if (totalSent != 0) {
-              adminMessage += `\n*${totalSent}* people have received a message for *${subj} ${crn}*`;
+              const emptyPlacesString = emptyPlaces >= 10? emptyPlaces:" "+emptyPlaces;
+              adminMessage += `\n*${totalSent}* people were texted *${emptyPlacesString}* places are free in *${subj} ${crn}*`;
             }
           }
         } catch (e) {
@@ -364,7 +386,10 @@ exports.checkKontenjan = functions.region('europe-west1').runWith(runtimeOpts).p
       }
     }
   }
-  adminMessage = `This calculation took *${new Date() - startDate}* milliseconds` + adminMessage;
+  adminMessage = `This calculation took *${new Date() - startDate}* milliseconds\n` +
+      `There are *${totalSubscriptions}* subscriptions in total and *${totalDifferentSubscriptions}* uniq\n` +
+      `*${totalTotalSent}* people in total were informed\n` +
+      adminMessage;
   sendMessage(adminChatId, adminMessage.trim(), {parse_mode: 'Markdown', disable_notification: true})
   return null;
 });
