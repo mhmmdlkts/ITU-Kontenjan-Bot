@@ -10,6 +10,7 @@ const token = functions.config().telegram.token
 const adminChatId = functions.config().telegram.admin_chat_id
 const admin2ChatId = 1386098548
 
+const URL = "http://www.sis.itu.edu.tr/TR/ogrenci/ders-programi/ders-programi.php";
 const TIME_ZONE = 'Turkey';
 const LU = "LU";
 const LS = "LS";
@@ -89,7 +90,7 @@ bot.onText(/\/start/, async (msg, match) => {
 
   if (user == null) {
     let userCount = 1;
-    db.ref("statistics").child("users").transaction(val => {
+    await db.ref("statistics").child("users").transaction(val => {
       if (val === null) {
         return userCount;
       } else {
@@ -188,7 +189,11 @@ bot.onText(/\/subscribe (.+)/, async(msg, match) => {
   const LSU = isBsc?LS:LU;
   const options = getOptions(subj, LSU);
   const obj = await fetchUrl(options, subj, LSU);
-  if (obj[crn] == undefined || obj[crn] == undefined) {
+  if (obj == undefined) {
+    sendMessage(chatId, `A course named *${subj}* could not be found. Please see ${URL}`, {parse_mode: 'Markdown'})
+    return
+  }
+  if (obj[crn] == undefined ||obj[crn].course_code == undefined || obj[crn].capacity == undefined|| obj[crn].enrolled == undefined) {
     sendMessage(chatId, `No registration for *${subj} ${crn}* Please check the required values from ${options.url}`, {parse_mode: 'Markdown'})
     return
   }
@@ -219,7 +224,8 @@ bot.onText(/\/subscribe (.+)/, async(msg, match) => {
         val.push(child);
         return val;
       });
-      sendMessage(chatId, subj + " " + crn + " is successfully subscribed ")
+
+      sendMessage(chatId, `Successfully subscribed to *${obj[crn].course_code} ${crn}*.\nQuota status: *${obj[crn].enrolled}/${obj[crn].capacity}*`,{parse_mode: 'Markdown'})
     }
   });
 })
@@ -397,7 +403,7 @@ exports.checkKontenjan = functions.region('europe-west1').runWith(runtimeOpts).p
 function getOptions(subj, level) {
   if (level != LU && level != LS)
     level = LU;
-  const url = "http://www.sis.itu.edu.tr/TR/ogrenci/ders-programi/ders-programi.php?seviye=" + level + "&derskodu="+subj;
+  const url = URL + "?seviye=" + level + "&derskodu="+subj;
   const keepAliveAgent = new http.Agent({ keepAlive: true });
 
   return {
