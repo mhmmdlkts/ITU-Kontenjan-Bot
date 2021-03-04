@@ -44,6 +44,35 @@ bot.onText(/\/count/, async (msg, match) => {
   sendMessage(chatId, `There are *${count}* users registered`, {parse_mode: 'Markdown'})
 });
 
+bot.onText(/\/countagain/, async (msg, match) => {
+  const chatId = msg.chat.id
+
+  if (chatId != adminChatId && chatId != admin2ChatId)
+    return;
+
+  let counter = 0;
+  await db.ref("users").once("value").then(r => {
+    r.forEach(u => {
+      counter++;
+    })
+  })
+  await db.ref("statistics").child("users").set(counter);
+
+  sendMessage(chatId, `There are *${counter}* users counted`, {parse_mode: 'Markdown'})
+});
+
+
+bot.onText(/\/stopuser (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id
+  const messageIdFromUser = parseInt(match[1]);
+
+  if (chatId != adminChatId)
+    return;
+
+
+  stopUser(messageIdFromUser);
+});
+
 bot.onText(/\/userinfo (.+)/, async (msg, match) => {
   const chatId = msg.chat.id
   const messageIdFromUser = match[1];
@@ -116,7 +145,7 @@ bot.onText(/\/status/, (msg, match) => {
     const buttons = [];
     const message = ["*Courses you subscribed to:*"];
     for(const sub in subscribes) {
-      let val = subscribes[sub].split("-")
+      const val = subscribes[sub].split("-")
       message.push(val.join(" "))
       buttons.push(["/unsubscribe " + val[1] + " " + val[2] + " " + val[0]]);
     }
@@ -141,21 +170,25 @@ bot.onText(/\/send (.+)/, (msg, match) => {
     to = match[1].split(" ")[0];
     message = match[1].split(to+" ")[1];
   }
+
+  if (to == "me")
+    to = chatId;
+
   if (message == "" || message == undefined || message == null)
     message = "empty"
 
-  const opt = {parse_mode: 'Markdown'}
   if (to == "*") {
     db.ref("users").once("value").then(r => {
       r.forEach(snap => {
-        sendMessage(snap.key, message,opt)
+        if (snap.key != admin2ChatId)
+          sendMessage(snap.key, message)
       })
     })
   } else {
-    sendMessage(to, message,opt)
+    sendMessage(to, message)
   }
   if (to != adminChatId) {
-    sendMessage(adminChatId, `You send to *${to}*\n\n${message}`,opt)
+    sendMessage(adminChatId, `You send to ${to}:\n\n${message}`)
   }
 });
 
@@ -167,9 +200,62 @@ async function sendMessage(to, text, options) {
     console.log("Can't send message: " + text)
     console.log(e)
     success = false;
+    stopUser(to);
   })
   return success
 }
+
+// dont send message to the user in this methode
+async function stopUser (chatId, force) {
+  if  (force == undefined)
+    force = true;
+  const user = (await db.ref("users").child(chatId).once("value")).val();
+  const subscribes = user.subscribes;
+
+  if (user == null || subscribes == null) return;
+  for(const sub in subscribes) {
+    const val = subscribes[sub].split("-")
+    unsubscribe(chatId, val[1], val[2], val[0] == LS, force);
+  }
+  sendMessage(adminChatId, `*${chatId}*'s *${subscribes.length}* subscriptions are canceled, force: ${force}`, {parse_mode: 'Markdown'});
+}
+
+bot.onText(/\/course (.+)/, async(msg, match) => {
+
+  const chatId = msg.chat.id
+
+  const splitted = match[1].split(" ");
+
+  if (chatId != adminChatId)
+    return;
+
+  const subj = splitted[0].toUpperCase();
+  const crn = splitted[1];
+
+  if (splitted.length <= 1 || subj.length != 3 || crn.length != 5 || /[^A-Z]/.test(subj) || /[^0-9]/.test(crn)) {
+    sendMessage(chatId, "Please type in this format /course <CODE> <CRN> <LU (optional)>")
+    return
+  }
+
+  const isBsc = splitted.length > 2 ? (splitted[2].toUpperCase() != LU) : LS;
+
+  const LSU = isBsc ? LS : LU;
+
+  let counter = 0;
+  let message = "";
+
+  const userIds = (await db.ref("listeners").child(LSU).child(subj).child(crn).once("value")).val();
+  if (userIds == null || userIds == undefined)
+    return;
+  userIds.forEach(userId => {
+    counter++;
+    message += `\n${JSON.stringify(userId)}`
+  })
+
+  message = `The *${subj} ${crn}* course is followed by the following *${counter}* users:\n` + message;
+
+  sendMessage(chatId, message, {parse_mode: 'Markdown'})
+});
 
 bot.onText(/\/subscribe (.+)/, async(msg, match) => {
 
@@ -236,8 +322,16 @@ bot.onText(/\/unsubscribe (.+)/, (msg, match) => {
   const splitted = match[1].split(" ");
 
   const subj = splitted[0].toUpperCase();
+
+  if (subj == '*') {
+    stopUser(chatId, false).then(r => {
+      sendMessage(chatId, "You have successfully unsubscribe from all courses")
+    });
+    return;
+  }
+
   const crn = splitted[1];
-  const isBsc = splitted.length > 2 ? (splitted[2].toUpperCase() != LU):LS;
+  const isBsc = splitted.length > 2 ? (splitted[2].toUpperCase() != LU):true;
 
   if (splitted.length <= 1 || subj.length != 3 || crn.length != 5 || /[^A-Z]/.test(subj) || /[^0-9]/.test(crn)) {
     sendMessage(chatId, "Please type in this format /unsubscribe <CODE> <CRN> <LU (optional)>")
@@ -247,33 +341,35 @@ bot.onText(/\/unsubscribe (.+)/, (msg, match) => {
   unsubscribe(chatId, subj, crn, isBsc, false)
 })
 
-function unsubscribe(chatId, subj, crn, isBsc, autoUnsubscribe) {
-  if (autoUnsubscribe == undefined)
-    autoUnsubscribe = false;
+function unsubscribe(chatId, subj, crn, isBsc, silent) {
+  if (silent == undefined)
+    silent = false;
   let wasListened = false;
+
   db.ref("listeners").child(isBsc?LS:LU).child(subj).child(crn).transaction(val => {
     if (val === null) {
       return [];
     } else {
-
       const index = val.indexOf(chatId);
+
       if (index > -1) {
         wasListened = true;
         val.splice(index, 1);
       }
-
       return val;
     }
   },r => {
     const opts = {
       reply_markup: {
         remove_keyboard: true
-      }
+      },
+      parse_mode: 'Markdown'
     };
     if (wasListened) {
-      sendMessage(chatId, "You are now not subscribing *" + subj + " " + crn + "*", opts)
-      if (autoUnsubscribe) {
+      if (silent) {
         sendMessage(adminChatId, `*${subj} ${crn}* subscription was removed due to failure to send a message to *${chatId}*`, opts)
+      } else {
+        sendMessage(chatId, "You are now not subscribing *" + subj + " " + crn + "*", opts)
       }
       const child = (isBsc?LS:LU) + "-" + subj + "-" + crn;
       db.ref("users").child(chatId).child("subscribes").transaction(val => {
@@ -289,7 +385,9 @@ function unsubscribe(chatId, subj, crn, isBsc, autoUnsubscribe) {
         }
       });
     } else {
-      sendMessage(chatId, "You were not already subscribing " + subj + " " + crn, opts)
+      if (!silent) {
+        sendMessage(chatId, "You were not already subscribing " + subj + " " + crn, opts)
+      }
     }
   });
 }
