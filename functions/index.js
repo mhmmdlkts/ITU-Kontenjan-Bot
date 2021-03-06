@@ -180,8 +180,7 @@ bot.onText(/\/send (.+)/, (msg, match) => {
   if (to == "*") {
     db.ref("users").once("value").then(r => {
       r.forEach(snap => {
-        if (snap.key != admin2ChatId)
-          sendMessage(snap.key, message)
+        sendMessage(snap.key, message)
       })
     })
   } else {
@@ -434,6 +433,7 @@ async function fetchUrl(options, subj, LSU) {
 }
 
 exports.checkKontenjan = functions.region('europe-west1').runWith(runtimeOpts).pubsub.schedule('5,20,35,50 * * * *').timeZone(TIME_ZONE).onRun( async (context) => {
+  return;
   const listeners = (await db.ref("listeners").once("value")).val()
   let adminMessage = "";
   const startDate = new Date();
